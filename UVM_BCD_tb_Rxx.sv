@@ -5,7 +5,10 @@
 import uvm_pkg::*;
 
 
-
+//Agent Configuration.
+//  Driver and Monitor BFMs.
+//  Active vs Passive
+//  has_functional coverage
 class bcd_agent_config extends uvm_object;
 	`uvm_object_utils(bcd_agent_config)
 
@@ -25,6 +28,10 @@ class bcd_agent_config extends uvm_object;
 
 endclass: bcd_agent_config 
 
+//Environment Configuration
+//  Driver and Monitor BFMs.
+//	has_functional_coverage, has_scoreboard
+//  bcd_agent_config
 class env_config extends uvm_object;
 	`uvm_object_utils(env_config);
 
@@ -44,6 +51,11 @@ class env_config extends uvm_object;
 
 endclass
 
+//BCD "Transaction"
+// Randomizable 10 bit input: binary
+// 4 bit outputs: hundreds, tens, ones
+// Convert to string function: convert2str()
+// Constraints: one_bit_only, ls_nibble_only
 class bcd_txn extends uvm_sequence_item;
 	`uvm_object_utils(bcd_txn)
 
@@ -64,11 +76,13 @@ class bcd_txn extends uvm_sequence_item;
 	//constraint one_bit_only {binary <= 9'b0_0000_0001;}
 
 	//Nibble (leas significant)
-	//constraint ls_nibble_only {bin <= 9'b0_0000_1111;}
+	//constraint ls_nibble_only {binary <= 9'b0_0000_1111;}
 
 
 endclass: bcd_txn
 
+//Base Sequence
+//  sends sequence item seq_item n_times.
 class base_sequence extends uvm_sequence #(bcd_txn);
 	`uvm_object_utils(base_sequence)
 
@@ -92,6 +106,7 @@ class base_sequence extends uvm_sequence #(bcd_txn);
 		repeat (n_times) begin
 			start_item(seq_item);
 			assert(seq_item.randomize());
+			`uvm_info("body", $sformatf("Sequence item: %b", seq_item.binary), UVM_LOW) 
 			finish_item(seq_item);
 		end
 
@@ -132,7 +147,7 @@ interface bcd_driver_bfm(input logic [9:0] binary);
 
 	//Methods
 	task run(bcd_txn item);
-		binary = item.binary;
+		//binary = item.binary;
 	endtask
 endinterface: bcd_driver_bfm
 
@@ -147,8 +162,7 @@ class bcd_driver extends uvm_driver #(bcd_txn);
 
 	//Virtual interface handle
 	virtual bcd_driver_bfm m_bfm;
-	// (!if... get the m_bfm drv handle from uvm_config_db)
-	//m_bfm.proxy = this //Set proxy?
+
 
 	//Build Phase
 	function void build_phase(uvm_phase phase);
@@ -165,7 +179,9 @@ class bcd_driver extends uvm_driver #(bcd_txn);
 		bcd_txn item;
 
 		forever begin
+			//`uvm_info(get_type_name(), $sformatf("Driver run phase started"), UVM_LOW);
 			seq_item_port.get_next_item(item);
+			`uvm_info(get_type_name(), $sformatf("Driver received sequence item. Binary: %b", item.binary), UVM_LOW);
 			//m_bfm.binary = item.binary; 
 			//m_bfm.run(item); //Let BFM handle "pin toggles" to support emulation. TODO: look into error: illegal reference to net binary
 			seq_item_port.item_done(); 
@@ -365,16 +381,20 @@ class my_test extends uvm_test;
 	endfunction: build_phase
 
 //	//Run Phase
-	task run_phase(uvm_phase phase);
+	task run_phase(uvm_phase phase);	
 		base_sequence b_seq = base_sequence::type_id::create("b_seq");
-		//execute body method of b_seq?
+		`uvm_info("", "Test run phase started", UVM_LOW) 
+		b_seq.start(m_bcd_agent.m_sequencer);
 	endtask
 endclass: my_test
 
+//HW Description Language Top Layer. 
+//  Instantiates pin interface and BFMs. 
+//  Adds virtual BFM interfaces to uvm_config_db
  module hdl_top;  
 
 	//Instantiate pin interface to DUT
-	bcd_if bcd_if0;
+	bcd_if bcd_if0();
         
 	//Instantiate BFM interfaces
 	bcd_monitor_bfm BCD_mon_bfm(
@@ -406,6 +426,7 @@ endclass: my_test
 
 endmodule: hdl_top
 
+//HW Verification Language Top Layer. Starts test.
 module hvl_top;
 	import uvm_pkg::*;
 
