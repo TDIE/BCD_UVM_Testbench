@@ -13,8 +13,10 @@ class bcd_agent_config extends uvm_object;
 	`uvm_object_utils(bcd_agent_config)
 
 	//BFM Virtual Interfaces
-	virtual bcd_monitor_bfm mon_bfm;
-	virtual bcd_driver_bfm drv_bfm;
+//	virtual bcd_monitor_bfm mon_bfm;
+//	virtual bcd_driver_bfm drv_bfm;
+	virtual bcd_if mon_bfm;
+	virtual bcd_if drv_bfm;	
 
 	//Data Members
 	uvm_active_passive_enum active = UVM_ACTIVE;
@@ -42,8 +44,10 @@ class env_config extends uvm_object;
 	//Configurations for the sub_component(s)
 	bcd_agent_config m_bcd_agent_cfg;
 
-	virtual bcd_monitor_bfm bcd_mon_bfm;
-	virtual bcd_driver_bfm bcd_driv_bfm;
+//	virtual bcd_monitor_bfm bcd_mon_bfm;
+//	virtual bcd_driver_bfm bcd_driv_bfm;
+	virtual bcd_if bcd_mon_bfm;
+	virtual bcd_if bcd_driv_bfm;
 
 	function new(string name="env_config");
 		super.new(name);
@@ -87,7 +91,7 @@ class base_sequence extends uvm_sequence #(bcd_txn);
 	`uvm_object_utils(base_sequence)
 
 	bcd_txn seq_item;
-	int n_times = 1;
+	int n_times = 3;
 
 	//Construnctor
 	function new (string name="base_sequence");
@@ -102,14 +106,21 @@ class base_sequence extends uvm_sequence #(bcd_txn);
 		
 		seq_item = bcd_txn::type_id::create("seq_item");
 		
-		//Send a randomized sequence item "n_times"
-		repeat (n_times) begin
+		//Send a sequence item "n_times"
+		for (int i = 0; i < n_times; i++) begin
 			start_item(seq_item);
-			seq_item.binary = n_times;
-			//assert(seq_item.randomize()); //Descoped, Intel Starter FPGA Edition license (free) does not support randomize()
-			`uvm_info("body", $sformatf("Sequence item: %b", seq_item.binary), UVM_LOW) 
+			seq_item.binary = i; //10'b00_0110_1111: Decimal 111. DUT outputs hundreds, tens, and ones should be '0001'
+			//`uvm_info("body", $sformatf("Sequence item: %b", seq_item.binary), UVM_LOW) 
 			finish_item(seq_item);
 		end
+
+//		repeat (n_times) begin
+//			start_item(seq_item);
+//			seq_item.binary = n_times; //10'b00_0110_1111; //Decimal 111: DUT outputs hundreds, tens, and ones should be '0001'
+//			//assert(seq_item.randomize()); //Descoped, Intel Starter FPGA Edition license (free) does not support randomize()
+//			`uvm_info("body", $sformatf("Sequence item: %b", seq_item.binary), UVM_LOW) 
+//			finish_item(seq_item);
+//		end
 
 		//Drop objection
 		if (starting_phase != null) begin
@@ -150,7 +161,7 @@ interface bcd_driver_bfm();
 
 	//Methods
 	task run(bcd_txn item);
-		binary = item.binary;
+		//binary = item.binary;
 	endtask
 endinterface: bcd_driver_bfm
 
@@ -164,8 +175,7 @@ class bcd_driver extends uvm_driver #(bcd_txn);
 	endfunction
 
 	//Virtual interface handle
-	virtual bcd_driver_bfm m_bfm;
-
+	virtual bcd_if m_bfm;
 
 	//Build Phase 
 	function void build_phase(uvm_phase phase);
@@ -185,8 +195,9 @@ class bcd_driver extends uvm_driver #(bcd_txn);
 			//`uvm_info(get_type_name(), $sformatf("Driver run phase started"), UVM_LOW);
 			seq_item_port.get_next_item(item);
 			`uvm_info(get_type_name(), $sformatf("Driver received sequence item. Binary: %b", item.binary), UVM_LOW);
-			//m_bfm.binary = item.binary; 
-			m_bfm.run(item); //Let BFM handle "pin toggles" to support emulation. TODO: look into error: illegal reference to net binary
+			m_bfm.if_binary = item.binary;
+			//m_bfm.run(item); //Let BFM handle "pin toggles" to support emulation. TODO: look into error: illegal reference to net binary
+			
 			seq_item_port.item_done(); 
 
 		end
@@ -204,7 +215,7 @@ class bcd_monitor extends uvm_monitor;
 	`uvm_component_utils(bcd_monitor)
 
 	uvm_analysis_port #(bcd_txn) bcd_mon_ap; //Analysis port
-	virtual bcd_monitor_bfm m_bfm; //BFM handle
+	virtual bcd_if m_bfm; //BFM handle
 	bcd_agent_config m_config; //Config, contains monitor bfm handle
 	bcd_txn item; //Sequence item
 
@@ -216,23 +227,31 @@ class bcd_monitor extends uvm_monitor;
 
 	//Build Phase 
 	function void build_phase(uvm_phase phase);
-		//bcd_mon_ap = new("bcd_mon_ap", this); //Analysis port
+		bcd_mon_ap = new("bcd_mon_ap", this); //Analysis port
+		
 		//Get config object
 		if(!uvm_config_db #(bcd_agent_config)::get(this, "", "bcd_agent_config", m_config)) begin 
 			`uvm_error("Config Error", "uvm_config_DB #(bcd_agent_config)::get cannot find resource bcd_agent_config")
 		end
-		m_bfm = m_config.mon_bfm; //Set local virtual interface property
-		//m_bfm.proxy =this; //Set BFM proxy handle?
+		m_bfm = m_config.mon_bfm; //Set virtual interface handle
+		
 	endfunction
 
 	//Run Phase
 	task run_phase(uvm_phase phase);
+
+		item = bcd_txn::type_id::create("item");
+
 		forever begin
-			@(m_bfm.binary)
-			item.hundreds = m_bfm.hundreds;
-			item.tens = m_bfm.tens;
-			item.ones = m_bfm.ones;
-		end
+			@(m_bfm.if_binary)
+				//`uvm_info(get_type_name(), $sformatf("Hundreds: %b", m_bfm.if_hundreds), UVM_LOW);
+				item.binary = m_bfm.if_binary;
+				item.hundreds = m_bfm.if_hundreds;
+				item.tens = m_bfm.if_tens;
+				item.ones = m_bfm.if_ones;
+				`uvm_info(get_type_name(), $sformatf("seq item created: binary: %b hundreds: %b, tens: %b, ones: %b", item.binary, item.hundreds, item.tens, item.ones), UVM_LOW);
+				bcd_mon_ap.write(item);
+		end 
 		//m_bfm.monitor(item);
 	endtask
 
@@ -278,9 +297,10 @@ class bcd_agent extends uvm_agent;
 		end*/
 	endfunction: build_phase
 
+	//Connect Phase
 	function void connect_phase(uvm_phase phase);
 		ap = m_monitor.bcd_mon_ap;
-		m_monitor.m_bfm = m_cfg.mon_bfm;
+		m_monitor.m_bfm = m_cfg.mon_bfm; 
 
 		if(m_cfg.active == UVM_ACTIVE) begin
 			m_driver.seq_item_port.connect(m_sequencer.seq_item_export);
@@ -362,20 +382,23 @@ class my_test extends uvm_test;
 	function void configure_bcd_agent(bcd_agent_config cfg);
 		cfg.active = UVM_ACTIVE;
 		cfg.has_functional_coverage = 0;
-		//cfg.has_scoreboard = 0;
+		//cfg.has_scoreboard = 1;
 	endfunction: configure_bcd_agent
 
 	//Build Phase
 	function void build_phase(uvm_phase phase);
 		m_env_cfg = env_config::type_id::create("m_env_cfg"); //Create env config object
-		//TODO: configure m_env_cfg
+		//Configure m_env_cfg?
 		m_bcd_cfg = bcd_agent_config::type_id::create("m_bcd_cfg"); //Create bcd agent config object
 		configure_bcd_agent(m_bcd_cfg);
 		
 		// Get monitor and driver bfm handles
-		if(!uvm_config_db #(virtual bcd_driver_bfm)::get(this, "", "BCD_drv_bfm", m_bcd_cfg.drv_bfm) ) `uvm_fatal(get_type_name(), "BCD_drv_bfm not found in UVM_config_db")
-		if(!uvm_config_db #(virtual bcd_monitor_bfm)::get(this, "", "BCD_mon_bfm", m_bcd_cfg.mon_bfm) ) `uvm_fatal(get_type_name(), "BCD_mon_bfm not found in UVM_config_db")		
-		
+//		if(!uvm_config_db #(virtual bcd_driver_bfm)::get(this, "", "BCD_drv_bfm", m_bcd_cfg.drv_bfm) ) `uvm_fatal(get_type_name(), "BCD_drv_bfm not found in UVM_config_db")
+//		if(!uvm_config_db #(virtual bcd_monitor_bfm)::get(this, "", "BCD_mon_bfm", m_bcd_cfg.mon_bfm) ) `uvm_fatal(get_type_name(), "BCD_mon_bfm not found in UVM_config_db")		
+		if(!uvm_config_db #(virtual bcd_if)::get(this, "", "BCD_if", m_bcd_cfg.drv_bfm) ) `uvm_fatal(get_type_name(), "BCD_if not found in UVM_config_db")
+		if(!uvm_config_db #(virtual bcd_if)::get(this, "", "BCD_if", m_bcd_cfg.mon_bfm) ) `uvm_fatal(get_type_name(), "BCD_if not found in UVM_config_db")
+		//`uvm_info(get_type_name(), $sformatf("mon_bfm: %h", m_bcd_cfg.mon_bfm), UVM_LOW);
+
 		m_env_cfg.m_bcd_agent_cfg = m_bcd_cfg; //set agent config member of env config
 		uvm_config_db #(env_config)::set(this, "*", "env_config", m_env_cfg); //Add env_config to uvm_config_db
 
@@ -397,32 +420,33 @@ endclass: my_test
  module hdl_top;  
 
 	//Instantiate pin interface to DUT
-	bcd_if bcd_if0();
+	bcd_if BCD_if();
 
 	//Connect DUT to bcd_if0
 	bcd dut0(
-		.binary(bcd_if0.if_binary),
-		.hundreds(bcd_if0.if_hundreds),
-		.tens(bcd_if0.if_tens),
-		.ones(bcd_if0.if_ones)
+		.binary(BCD_if.if_binary),
+		.hundreds(BCD_if.if_hundreds),
+		.tens(BCD_if.if_tens),
+		.ones(BCD_if.if_ones)
 	);
 
-	//Instantiate BFM interfaces
-	bcd_monitor_bfm BCD_mon_bfm(
-		.binary (bcd_if0.mp_mon.if_binary),
-		.hundreds(bcd_if0.mp_mon.if_hundreds),
-		.tens(bcd_if0.mp_mon.if_tens),
-		.ones(bcd_if0.mp_mon.if_ones)
-	);
+//	//Instantiate BFM interfaces
+//	bcd_monitor_bfm BCD_mon_bfm(
+//		.binary (BCD_if.mp_mon.if_binary),
+//		.hundreds(BCD_if.mp_mon.if_hundreds),
+//		.tens(BCD_if.mp_mon.if_tens),
+//		.ones(BCD_if.mp_mon.if_ones)
+//	);
 
-	bcd_driver_bfm BCD_drv_bfm(
-		.binary (bcd_if0.mp_drv.if_binary)
-	);
+//	bcd_driver_bfm BCD_drv_bfm(
+//		.binary (BCD_if.mp_drv.if_binary)
+//	);
 
 	//Add virtual interfaces to uvm config db
 	initial begin
-		uvm_config_db #(virtual bcd_monitor_bfm)::set(null, "uvm_test_top", "BCD_mon_bfm", BCD_mon_bfm);
-		uvm_config_db #(virtual bcd_driver_bfm)::set(null, "uvm_test_top", "BCD_drv_bfm", BCD_drv_bfm);
+//		uvm_config_db #(virtual bcd_monitor_bfm)::set(null, "uvm_test_top", "BCD_mon_bfm", BCD_mon_bfm);
+//		uvm_config_db #(virtual bcd_driver_bfm)::set(null, "uvm_test_top", "BCD_drv_bfm", BCD_drv_bfm);
+		uvm_config_db #(virtual bcd_if)::set(null, "uvm_test_top", "BCD_if", BCD_if);
 	end
 
 	
